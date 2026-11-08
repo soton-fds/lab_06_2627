@@ -46,6 +46,42 @@ met <- met |>
 
 ::: {.solution}
 
+Below, find the plot.
+```{r}
+met |>
+    filter(station == "southampton" & month == 7) |>
+    ggplot(aes(x = date, y = tmax)) +
+    geom_line() +
+    labs(
+        x = "Date",
+        y = "Maximum temperature (°C)",
+        title = "July maximum temperatures in Southampton"
+    )
+```
+In the full plot there is a short gap in the line just after 1940, but it is hard to see exactly where it starts and ends.
+Zooming in on the $x$ axis to 1925–1950 makes it much clearer:
+```{r}
+met |>
+    filter(station == "southampton" & month == 7) |>
+    ggplot(aes(x = date, y = tmax)) +
+    geom_line() +
+    labs(
+        x = "Date",
+        y = "Maximum temperature (°C)",
+        title = "July maximum temperatures in Southampton"
+    ) +
+    coord_cartesian(xlim = c(ymd("1925-01-01"), ymd("1950-12-31")))
+```
+
+The gap lies between 1940 and 1945, so we can filter the dataset to just those years to see the root cause:
+
+```{r}
+met |> filter(station == "southampton" & month == 7 & year >= 1940 & year <= 1945)
+```
+
+The break is due to an `NA` value of `tmax` in 1941: the row for July 1941 exists, but the maximum temperature was not recorded.
+`geom_line` cannot draw a line to a missing value, so it leaves a gap, rather than joining 1940 directly to 1942.
+
 :::
 
 Next we look at every month of the year, not just July, at four stations.
@@ -55,6 +91,29 @@ Next we look at every month of the year, not just July, at four stations.
 - [ ] What does the line tell you about the trend of historical maximum temperatures?
 
 ::: {.solution}
+The next plot shows a scatter plot by station:
+
+```{r}
+stations <- c("southampton", "oxford", "sheffield", "paisley")
+met |>
+    filter(station %in% stations) |>
+    ggplot(aes(x = date, y = tmax, colour = station)) +
+    geom_point(alpha = 0.2) +
+    geom_smooth() +
+    labs(
+        x = "Date",
+        y = "Maximum temperature (°C)",
+        title = "Monthly maximum temperatures"
+    )
+```
+
+`geom_smooth()` prints a message saying which method it used.
+Unlike the straight `method = "lm"` lines in the Week 6 notes, here it has fitted a flexible curve (`method = 'gam'`), which can bend to follow the data.
+The grey band around each line shows the uncertainty in the fitted curve (a confidence interval); it is narrow here because there is a lot of data.
+Lowering `alpha` makes the individual points faint, so the lines stand out.
+
+The smooth lines rise slightly at each station, which hints at an increasing trend. But it is hard to be sure from this plot.
+Because every month of the year is included, the points at each station span a band about 20°C tall (cold winters to warm summers), and any long-term change is small by comparison.
 
 :::
 
@@ -67,6 +126,64 @@ Averaging over each year removes the seasonal cycle, since every (complete) year
 
 ::: {.solution}
 
+We compute the annual means, and also count how many months of `tmax` each mean is based on, since we will need this below:
+
+```{r}
+annual <- met |>
+    filter(station %in% stations) |>
+    group_by(station, year) |>
+    summarise(
+        mean_tmax = mean(tmax, na.rm = TRUE),
+        n_months = sum(!is.na(tmax)),
+        .groups = "drop"
+    )
+
+annual |>
+    ggplot(aes(x = year, y = mean_tmax, colour = station)) +
+    geom_line() +
+    geom_smooth() +
+    labs(
+        x = "Year",
+        y = "Annual mean maximum temperature (°C)",
+        title = "Annual mean maximum temperatures"
+    )
+```
+
+The $y$ axis now covers a few degrees rather than 25, and the upward trend is much easier to see.
+But there are some odd spikes, particularly at the ends of the records.
+Sorting by `mean_tmax` shows the most extreme years:
+
+```{r}
+annual |> arrange(mean_tmax) |> head(5)
+annual |> arrange(desc(mean_tmax)) |> head(5)
+```
+
+The coldest "year" in the data is Paisley in 2011, but that mean is based on only 3 months of data; the warmest is Oxford in 2019, based on only 5 months.
+An annual mean from a partial year depends on *which* months are present: a year containing only winter months will look very cold.
+Using `na.rm = TRUE` made the `mean` calculation work, but it did not make the answer meaningful.
+(Where a station has no `tmax` values at all for a year, `mean(..., na.rm = TRUE)` returns `NaN`, "not a number", and `ggplot` drops these rows with a warning.)
+
+Keeping only complete years:
+
+```{r}
+annual |>
+    filter(n_months == 12) |>
+    ggplot(aes(x = year, y = mean_tmax, colour = station)) +
+    geom_line() +
+    geom_smooth() +
+    labs(
+        x = "Year",
+        y = "Annual mean maximum temperature (°C)",
+        title = "Annual mean maximum temperatures (complete years only)"
+    )
+```
+
+Oxford and Sheffield warm by about 2°C over their records, most of it since around 1980.
+Southampton warms by about 1°C, more steadily, although its record stops in 2000.
+Paisley's record is too short (1959–2011) to say much on its own.
+Note that when we *filter out* incomplete years, `geom_line` simply joins the remaining points, so there is no break in the line where a year is missing.
+Compare this with the July plot at the start of this task, where an `NA` value produced a visible gap.
+
 :::
 
 ### Task 2: Rainfall
@@ -75,12 +192,93 @@ Averaging over each year removes the seasonal cycle, since every (complete) year
 
 ::: {.solution}
 
+`geom_bar()` counts the rows in each category for us, so we only need to give it an `x` aesthetic.
+
+```{r}
+met |>
+    ggplot(aes(x = station)) +
+    geom_bar() +
+    labs(
+        x = "Station",
+        y = "Number of monthly records",
+        title = "Number of monthly records by station"
+    ) +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+Alternatively we can count the rows ourselves with `count()`, which creates a column `n`.
+The bar heights are then already in the data, so we use `geom_col()`:
+
+```{r}
+met |>
+    count(station) |>
+    ggplot(aes(x = station, y = n)) +
+    geom_col() +
+    labs(
+        x = "Station",
+        y = "Number of monthly records",
+        title = "Number of monthly records by station"
+    ) +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+The two plots are identical.
+
 :::
 
 - [ ] Produce a bar chart showing the average rainfall (across all months and years) for the 5 stations with the highest average rainfall.
 - [ ] Now make a *deliberately misleading* version of this plot, which suggests that Cwmystwyth gets several times as much rain as Stornoway. Which of the principles in the Week 6 notes does your plot break? How could a reader spot the trick?
 
 ::: {.solution}
+
+We first compute the mean rainfall at each station with `group_by` and `summarise`.
+Because we have already computed the height of each bar, we use `geom_col()`; `geom_bar()` would instead count the rows in each category.
+To keep only the five wettest stations, we sort the summarised data with `arrange(desc(...))` and keep the first five rows with `head(5)` *before* passing it to `ggplot`.
+
+```{r}
+met |>
+    group_by(station) |>
+    summarise(mean_rainfall = mean(rain, na.rm = TRUE), .groups = "drop") |>
+    arrange(desc(mean_rainfall)) |>
+    head(5) |>
+    ggplot(aes(x = station, y = mean_rainfall)) +
+    geom_col() +
+    labs(
+        x = "Station",
+        y = "Mean monthly rainfall (mm)",
+        title = "Mean monthly rainfall at the five wettest stations"
+    ) +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+Cwmystwyth has a mean monthly rainfall of about 150 mm and Stornoway about 100 mm, so Cwmystwyth is only about 1.5 times as wet.
+To make the difference look much bigger, we can zoom in on the $y$ axis with `coord_cartesian`, as we did in Task 1, so that the bars no longer start at zero:
+
+```{r}
+met |>
+    group_by(station) |>
+    summarise(mean_rainfall = mean(rain, na.rm = TRUE), .groups = "drop") |>
+    arrange(desc(mean_rainfall)) |>
+    head(5) |>
+    ggplot(aes(x = station, y = mean_rainfall)) +
+    geom_col() +
+    coord_cartesian(ylim = c(95, 150)) +
+    labs(
+        x = "Station",
+        y = "Mean monthly rainfall (mm)",
+        title = "Mean monthly rainfall at the five wettest stations"
+    ) +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+The Cwmystwyth bar is now around seven times as tall as the Stornoway bar.
+This breaks the first principle, "Be honest with scales": we read a bar chart by comparing the *lengths* of the bars, so the value axis should start at zero.
+It is the same trick as the welfare chart in the Week 6 notes.
+Nothing in the plot is technically false: a careful reader can spot the trick by checking where the $y$ axis starts.
+But most readers will judge the bar lengths rather than read the axis.
+
+(Setting `scale_y_continuous(limits = c(95, 150))` instead does not work: `ggplot` removes any bar that extends outside the scale limits, and since every bar starts at zero, all five disappear with a warning.
+`coord_cartesian` zooms in on the plot *after* the bars have been drawn, instead.)
 
 :::
 
@@ -90,12 +288,79 @@ Bar charts of averages hide how much the rainfall varies from month to month, so
 
 ::: {.solution}
 
+Box plots use `geom_boxplot()`, with the grouping variable on one axis and the numeric variable on the other.
+
+```{r}
+met |>
+    ggplot(aes(x = station, y = rain)) +
+    geom_boxplot() +
+    labs(
+        x = "Station",
+        y = "Rainfall (mm)",
+        title = "Distribution of monthly rainfall by station"
+    ) +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+By default, the whiskers extend up to 1.5 times the interquartile range (IQR) beyond the box, and any points outside them are drawn as outliers.
+There are plenty of high outliers (very wet months), but no low outliers at all.
+Rainfall cannot be negative, and at every station the lower whisker limit (the lower quartile minus 1.5 times the IQR) is below zero, so no value can fall beneath it.
+
 :::
 
 - [ ] Plot a histogram of monthly rainfall across all stations. Experiment with the `bins` argument. How would you describe the shape of the distribution?
 - [ ] Redraw the histogram with a logarithmic $x$ axis (see the Week 6 notes). What happens to the shape? Read the warning messages carefully, and compare the number of rows removed with the previous histogram. Which months have been dropped, and why?
 
 ::: {.solution}
+
+A histogram needs only an `x` aesthetic: `geom_histogram()` divides the $x$ axis into bins and counts the rows in each one.
+
+```{r}
+met |>
+    ggplot(aes(x = rain)) +
+    geom_histogram(bins = 50) +
+    labs(
+        x = "Monthly rainfall (mm)",
+        y = "Number of months",
+        title = "Distribution of monthly rainfall across all stations"
+    )
+```
+
+With too few bins (say 5) the shape is lost; with too many (say 500) the histogram becomes noisy.
+Something in the range 30–100 works well here.
+
+The distribution is strongly *right-skewed*: half of all months have between about 40 and 95 mm of rain (the median is 63 mm), but there is a long tail of very wet months reaching up to 569 mm (Eskdalemuir, December 2015).
+On the left the distribution stops sharply at zero, since rainfall cannot be negative.
+
+For the log scale, we add a scale transformation, as in the Week 6 notes:
+
+```{r}
+met |>
+    ggplot(aes(x = rain)) +
+    geom_histogram(bins = 50) +
+    scale_x_continuous(transform = "log10") +
+    labs(
+        x = "Monthly rainfall (mm, log scale)",
+        y = "Number of months",
+        title = "Distribution of monthly rainfall across all stations"
+    )
+```
+
+The log scale stretches out small values and squashes large ones.
+The long tail of wet months is pulled in, and the distribution is now *left*-skewed instead, with a tail of unusually dry months (below 10 mm).
+So the log scale does not make the distribution symmetric, but it does make the dry months, which were squashed against zero before, much easier to see.
+
+There are two warnings.
+The first says that the log transformation "introduced infinite values", and the second that 1503 rows were removed, compared with 1498 for the original histogram.
+The 1498 are the rows where `rain` is `NA`.
+The extra 5 are months with *zero* rainfall, because $\log_{10}(0) = -\infty$ cannot be plotted:
+
+```{r}
+met |> filter(rain == 0)
+```
+
+Some UK months really have been this dry, so these are probably genuine observations rather than errors, yet the log scale drops them from the plot.
+It is always worth reading warnings like this rather than ignoring them.
 
 :::
 
